@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>ALN 数据上传（分享包）</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "PingFang SC", sans-serif; background: #0f1115; color: #d5dae3;
+         margin: 0; padding: 24px; max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: #7a8494; font-size: 12px; margin-bottom: 18px; }
+  .card { background: #171a21; border: 1px solid #262b36; border-radius: 8px; padding: 16px; margin-bottom: 14px; }
+  .card h2 { font-size: 13px; margin: 0 0 12px; color: #9aa4b2; font-weight: 600; }
+  .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  input[type=text], input[type=number], input[type=password], select {
+    background: #0f1115; color: #d5dae3; border: 1px solid #2a303c; border-radius: 5px;
+    padding: 7px 10px; font-size: 13px; flex: 1; min-width: 0; }
+  button { background: #232936; color: #d5dae3; border: 1px solid #333b49; border-radius: 5px;
+           padding: 7px 14px; font-size: 13px; cursor: pointer; }
+  button:hover { background: #2c3444; }
+  button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+  button.primary:hover { background: #1d4fd7; }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  .file-item { display: flex; align-items: center; gap: 8px; background: #0f1115;
+               border: 1px solid #232936; border-radius: 5px; padding: 6px 10px; margin-bottom: 6px; font-size: 12px; }
+  .file-item .sz { color: #7a8494; font-family: monospace; }
+  .hint { font-size: 11px; color: #7a8494; }
+  .warn { color: #d97706; font-size: 12px; }
+  .err { color: #ef4444; font-size: 12px; }
+  .ok { color: #16a34a; font-size: 12px; }
+  .bar-wrap { background: #0f1115; border: 1px solid #232936; border-radius: 4px; height: 10px; overflow: hidden; margin: 4px 0 10px; }
+  .bar { height: 100%; background: #2563eb; transition: width .25s; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #232936; }
+  .badge.on { background: #14532d; color: #86efac; }
+  .badge.off { background: #451a1a; color: #fca5a5; }
+  label.cb { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; cursor: pointer; }
+  a { color: #60a5fa; }
+  #logline { font-family: monospace; font-size: 11px; color: #7a8494; min-height: 16px; }
+</style>
+</head>
+<body>
+<h1>ALN 数据上传（分享包）
+  <button onclick="fetch('/api/shutdown',{method:'POST'}).then(()=>{document.body.innerHTML='<h2 style=padding:40px>已退出，可关闭本页</h2>'})"
+    style="float:right;font-size:11px;padding:4px 10px">退出</button></h1>
+<div class="sub">本机提取 → 生成参数分享包 → 提交后网站自动更新 ·
+  网站状态 <span id="sitebadge" class="badge">检查中…</span></div>
+
+<div class="card">
+  <h2>① 数据文件（.zip / .s1p / .s2p / .snp，可多选）</h2>
+  <div id="files"></div>
+  <div class="row">
+    <button onclick="addFile()">+ 添加文件</button>
+    <span class="hint">大 zip 直接选本机路径，不经过浏览器上传</span>
+  </div>
+</div>
+
+<div class="card">
+  <h2>② 批次与对照表</h2>
+  <div class="row">
+    <span style="font-size:13px;flex:0 0 90px">批次号</span>
+    <input type="text" id="batch_no" placeholder="如 #5（与现有批次不重复）" oninput="checkBatch()">
+  </div>
+  <div class="row"><span style="flex:0 0 90px"></span><span id="batchhint" class="hint"></span></div>
+  <div class="row">
+    <span style="font-size:13px;flex:0 0 90px">对照表</span>
+    <select id="mapping_sel" onchange="onMappingMode()"></select>
+    <button id="browse_map_btn" onclick="browseMapping()" style="display:none">浏览…</button>
+  </div>
+  <div class="row"><span style="flex:0 0 90px"></span><span id="mappath" class="hint"></span></div>
+</div>
+
+<div class="card">
+  <h2>③ 处理选项</h2>
+  <div class="row">
+    <span style="font-size:13px;flex:0 0 90px">频率范围</span>
+    <input type="number" id="f_start" placeholder="下限 GHz（可空）" step="0.1">
+    <span class="hint">—</span>
+    <input type="number" id="f_end" placeholder="上限 GHz（可空）" step="0.1">
+  </div>
+  <label class="cb">
+    <input type="checkbox" id="deembed" onchange="document.getElementById('dmethod').style.display=this.checked?'flex':'none'">
+    <span>去嵌（开路/短路校准）<br><span class="hint">需 zip 内含 OPEN/SHORT 校准 .s2p</span></span>
+  </label>
+  <div class="row" id="dmethod" style="display:none;margin-top:8px">
+    <span style="font-size:13px;flex:0 0 90px">去嵌方法</span>
+    <select id="deembed_method">
+      <option value="default">平台默认（同目录第一组校准件）</option>
+      <option value="original">原始（按编号+位置匹配）</option>
+      <option value="gsg100">GSG100（前缀精确匹配）</option>
+      <option value="vz">VZ（支持 V-Z 器件）</option>
+      <option value="basic">基础（WO/WS 识别）</option>
+    </select>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <span style="font-size:13px;flex:0 0 90px">输出目录</span>
+    <input type="text" id="out_dir" placeholder="默认：桌面">
+    <button onclick="browseDir()">浏览…</button>
+  </div>
+</div>
+
+<div class="row" style="justify-content:flex-end">
+  <button class="primary" id="go" onclick="startPack()" disabled>开始打包</button>
+</div>
+
+<div class="card" id="progc" style="display:none">
+  <h2>④ 进度</h2>
+  <div class="row"><span class="hint" style="width:56px" id="stagename">—</span>
+    <div class="bar-wrap" style="flex:1"><div class="bar" id="bar" style="width:0%"></div></div>
+    <span class="hint" id="pct" style="width:44px;text-align:right">0%</span></div>
+  <div id="logline"></div>
+</div>
+
+<div class="card" id="result" style="display:none">
+  <h2>⑤ 完成</h2>
+  <div id="resultinfo"></div>
+  <div class="row">
+    <button onclick="openDir()">打开所在目录</button>
+  </div>
+  <hr style="border-color:#232936;margin:12px 0">
+  <div class="hint" style="margin-bottom:8px">提交到 GitHub（合并 PR 后网站自动更新；无 token 则把包发给管理员）：</div>
+  <div class="row">
+    <input type="password" id="token" placeholder="GitHub token（仅本机使用，可选记住）">
+  </div>
+  <div class="row">
+    <label class="cb"><input type="checkbox" id="remember"> <span class="hint">记住 token（存 ~/.aln-uploader/config.json，权限 600）</span></label>
+    <button class="primary" id="submitbtn" onclick="submitPack()">提交并创建 PR</button>
+  </div>
+  <div id="submitinfo"></div>
+</div>
+
+<script>
+let files = [], siteState = {online: false, batches: [], mappings: []}, packPath = null, pollTimer = null;
+
+const $ = id => document.getElementById(id);
+
+async function api(path, body) {
+  const r = await fetch(path, body ? {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)} : {});
+  return r.json();
+}
+
+function fmtSize(p) { return ''; }
+
+function renderFiles() {
+  $('files').innerHTML = files.map((f, i) =>
+    `<div class="file-item"><span style="flex:1;overflow:hidden;text-overflow:ellipsis">${f}</span>
+     <button onclick="files.splice(${i},1);renderFiles();refreshGo()">删</button></div>`).join('')
+    || '<div class="hint">尚未选择文件</div>';
+  refreshGo();
+}
+
+function refreshGo() {
+  $('go').disabled = !(files.length && $('batch_no').value.trim());
+}
+
+async function addFile() {
+  const r = await api('/api/browse', {kind: 'zip'});
+  if (r.path) { files.push(r.path); renderFiles(); }
+  if (!$('batch_no').value && r.path) {
+    const base = r.path.split('/').pop().replace(/\.(zip|s1p|s2p|snp)$/i, '');
+    $('batch_no').value = base; checkBatch();
+  }
+}
+
+async function browseMapping() {
+  const r = await api('/api/browse', {kind: 'mapping'});
+  if (r.path) $('mappath').textContent = r.path;
+}
+
+async function browseDir() {
+  const r = await api('/api/browse', {kind: 'dir'});
+  if (r.path) $('out_dir').value = r.path;
+}
+
+function onMappingMode() {
+  const v = $('mapping_sel').value;
+  $('browse_map_btn').style.display = v === '__local__' ? '' : 'none';
+  if (v !== '__local__') $('mappath').textContent = '';
+}
+
+function checkBatch() {
+  const v = $('batch_no').value.trim();
+  const h = $('batchhint');
+  if (!v) { h.textContent = ''; refreshGo(); return; }
+  if (siteState.batches.includes(v)) {
+    h.innerHTML = '<span class="err">批次号已存在于网站，请更换</span>';
+  } else {
+    h.innerHTML = '<span class="ok">可用</span>' + (siteState.online ? '' : '（离线，未能查重）');
+  }
+  refreshGo();
+}
+
+async function boot() {
+  siteState = await api('/api/site');
+  const b = $('sitebadge');
+  if (siteState.online) { b.textContent = '在线'; b.className = 'badge on'; }
+  else { b.textContent = '离线（对照表只能用本地 xlsx）'; b.className = 'badge off'; }
+  const sel = $('mapping_sel');
+  sel.innerHTML = siteState.mappings.map(m =>
+    `<option value="${m.name}">${m.name}（网站已有，${m.entry_count} 条）</option>`).join('')
+    + '<option value="__local__">本地 xlsx/csv 文件…</option>';
+  const cfg = await api('/api/config');
+  if (cfg.has_token) $('token').placeholder = '已记住 token（留空即用）';
+}
+
+async function startPack() {
+  const sel = $('mapping_sel').value;
+  const body = {
+    inputs: files,
+    batch_no: $('batch_no').value.trim(),
+    mapping_mode: sel === '__local__' ? 'local' : 'site',
+    mapping_name: sel === '__local__' ? '' : sel,
+    mapping_path: sel === '__local__' ? $('mappath').textContent : '',
+    f_start: $('f_start').value ? parseFloat($('f_start').value) : null,
+    f_end: $('f_end').value ? parseFloat($('f_end').value) : null,
+    deembed: $('deembed').checked,
+    deembed_method: $('deembed_method').value,
+    out_dir: $('out_dir').value,
+  };
+  $('go').disabled = true;
+  $('progc').style.display = '';
+  $('result').style.display = 'none';
+  const r = await api('/api/pack', body);
+  if (r.error) { $('logline').innerHTML = '<span class="err">' + r.error + '</span>'; $('go').disabled = false; return; }
+  pollTimer = setInterval(poll, 500);
+}
+
+async function poll() {
+  const s = await api('/api/progress');
+  $('stagename').textContent = s.stage || '—';
+  const pct = s.total ? Math.round(100 * s.current / s.total) : 0;
+  $('bar').style.width = pct + '%';
+  $('pct').textContent = pct + '%';
+  $('logline').textContent = s.msg || '';
+  if (s.done) {
+    clearInterval(pollTimer);
+    $('go').disabled = false;
+    if (s.error) {
+      $('logline').innerHTML = '<span class="err">失败：' + s.error + '</span>';
+    } else {
+      packPath = s.pack_path;
+      const m = s.meta || {};
+      $('result').style.display = '';
+      $('resultinfo').innerHTML =
+        `<div class="ok">分享包已生成</div>
+         <div class="hint" style="margin-top:6px">${packPath}</div>
+         <div class="hint">器件行数 ${m.device_count} · 提取失败 ${m.failure_count} · 批次 ${m.batch_no} · ${m.process_type}${m.deembedded ? ' · 已去嵌(' + m.deembed_method + ')' : ''}</div>`;
+    }
+  }
+}
+
+async function openDir() { await api('/api/open_dir', {path: packPath}); }
+
+async function submitPack() {
+  $('submitbtn').disabled = true;
+  $('submitinfo').innerHTML = '<span class="hint">提交中…</span>';
+  const r = await api('/api/submit', {pack_path: packPath, token: $('token').value, remember: $('remember').checked});
+  $('submitbtn').disabled = false;
+  if (r.pr_url) {
+    $('submitinfo').innerHTML = `<div class="ok">已创建 PR：<a href="${r.pr_url}" target="_blank">${r.pr_url}</a></div>
+      <div class="hint">等 CI 校验通过后合并，网站几分钟内更新。</div>`;
+  } else {
+    $('submitinfo').innerHTML = '<span class="err">' + (r.error || '提交失败') + '</span>';
+  }
+}
+
+boot();
+</script>
+</body>
+</html>

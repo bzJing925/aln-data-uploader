@@ -1,0 +1,46 @@
+name: release-installers
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest   # Apple Silicon
+            artifact: aln-uploader-macos-arm64.zip
+          - os: windows-latest
+            artifact: aln-uploader-windows-amd64.zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r src/requirements.txt
+      - name: 构建
+        run: python build_uploader.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: aln-uploader-*.zip
+          merge-multiple: true
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: aln-uploader-*.zip
+          generate_release_notes: true

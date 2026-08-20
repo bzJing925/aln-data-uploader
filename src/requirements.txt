@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+numpy
+scipy
+scikit-rf
+pandas
+openpyxl
+pydantic
+pydantic-settings
+pyinstaller
