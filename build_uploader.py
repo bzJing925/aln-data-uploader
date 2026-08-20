@@ -13,6 +13,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Windows GBK 控制台打不了中文/特殊字符
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = Path(__file__).resolve().parent
 
 # 明确排除主仓库 venv 里可能存在的重依赖（只按 import 图打包，不 collect app 全子模块）
