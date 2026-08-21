@@ -5,12 +5,20 @@ ALN 谐振器数据平台的**同事侧上传工具**：在本机把 snp 压缩�
 
 ## 下载安装
 
-到 [Releases](../../releases) 下载对应系统：
+git clone 即可拿到安装包（仓库公开，无需 GitHub 账号）：
 
-- macOS（Apple 芯片）：`aln-uploader-macos-arm64.zip` → 解压得 `ALN-Uploader.app`
+```bash
+git clone --depth 1 https://github.com/bzJing925/aln-data-uploader.git
+# 网络慢时走镜像：
+git clone --depth 1 https://ghproxy.net/https://github.com/bzJing925/aln-data-uploader.git
+```
+
+安装包在 `installers/` 目录（也可以到 [Releases](../../releases) 直接下载同名文件）：
+
+- macOS（Apple 芯片）：`installers/aln-uploader-macos-arm64.zip` → 解压得 `ALN-Uploader.app`
   - 首次打开如提示"无法验证开发者"：右键 → 打开；或终端执行
     `xattr -d com.apple.quarantine /path/to/ALN-Uploader.app`
-- Windows：`aln-uploader-windows-amd64.zip` → 解压得 `ALN-Uploader.exe`，双击运行
+- Windows：`installers/aln-uploader-windows-amd64.zip` → 解压得 `ALN-Uploader.exe`，双击运行
 
 运行后浏览器自动打开上传页面（http://127.0.0.1:8630），关闭页面右上角"退出"即结束。
 
@@ -37,4 +45,5 @@ mBVD 六列（C0/Cm/Lm/Rm/R0/Rs）识别但平台不存储；未识别的列会�
 
 - 源码由主仓库 `backend/scripts/dist_uploader.py` vendor 生成，勿直接改 `src/`
 - 本机构建：`python build_uploader.py`（macOS 构建 mac 包，Windows 构建 Win 包）
-- 发版：打 tag `v*` 推送，CI 自动构建双平台安装包并发 Release
+- 发版：打 tag `v*` 推送，CI 自动构建双平台安装包并发 Release；
+  发版后把新安装包下载下来替换 `installers/` 里的旧文件并推送（git clone 渠道的用户拿的是这里的）
