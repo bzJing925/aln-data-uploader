@@ -46,11 +46,24 @@
   网站状态 <span id="sitebadge" class="badge">检查中…</span></div>
 
 <div class="card">
-  <h2>① 数据文件（.zip / .s1p / .s2p / .snp，可多选）</h2>
+  <h2>① 数据文件
+    <span style="font-weight:400;margin-left:12px">
+      <label style="font-size:12px;cursor:pointer"><input type="radio" name="itype" value="snp" checked onchange="onType()"> snp 压缩包/散文件</label>
+      <label style="font-size:12px;cursor:pointer;margin-left:10px"><input type="radio" name="itype" value="xlsx" onchange="onType()"> 参数表格 (xlsx)</label>
+    </span>
+  </h2>
+  <div id="xlsx_hint" class="hint" style="display:none;margin-bottom:8px">
+    表格的表头至少包含：original_filename、display_name、coord（或X和Y）、EG、FL、AG、PF、Area(um2)、
+    fs(GHz)、fp(GHz)、Zs(Ω)、Zp(Ω)、Qs、Qp、Qs_BodeQ、Qp_BodeQ、k2eff(%)；其他已知列自动识别
+  </div>
   <div id="files"></div>
   <div class="row">
     <button onclick="addFile()">+ 添加文件</button>
-    <span class="hint">大 zip 直接选本机路径，不经过浏览器上传</span>
+    <span class="hint" id="add_hint">大 zip 直接选本机路径，不经过浏览器上传</span>
+  </div>
+  <div class="row" id="de_row" style="display:none">
+    <label class="cb"><input type="checkbox" id="xlsx_de">
+      <span>该表格数据<b>已去嵌</b>（写入 deembedded 标记；文件名含 _de 时自动勾选）</span></label>
   </div>
 </div>
 
@@ -77,9 +90,9 @@
     <span class="hint">—</span>
     <input type="number" id="f_end" placeholder="上限 GHz（可空）" step="0.1">
   </div>
-  <label class="cb">
+  <label class="cb" id="deembed_section">
     <input type="checkbox" id="deembed" onchange="document.getElementById('dmethod').style.display=this.checked?'flex':'none'">
-    <span>去嵌（开路/短路校准）<br><span class="hint">需 zip 内含 OPEN/SHORT 校准 .s2p</span></span>
+    <span>去嵌（开路/短路校准）<br><span class="hint">需 zip 内含 OPEN/SHORT 校准 .s2p；表格模式在①勾选“已去嵌”</span></span>
   </label>
   <div class="row" id="dmethod" style="display:none;margin-top:8px">
     <span style="font-size:13px;flex:0 0 90px">去嵌方法</span>
@@ -132,13 +145,22 @@
 let files = [], siteState = {online: false, batches: [], mappings: []}, packPath = null, pollTimer = null;
 
 const $ = id => document.getElementById(id);
+const inputType = () => document.querySelector('input[name=itype]:checked').value;
+
+function onType() {
+  const x = inputType() === 'xlsx';
+  $('xlsx_hint').style.display = x ? '' : 'none';
+  $('de_row').style.display = x ? '' : 'none';
+  $('add_hint').textContent = x ? '参数表格每次一个' : '大 zip 直接选本机路径，不经过浏览器上传';
+  $('deembed_section').style.display = x ? 'none' : '';  // 去嵌仅 snp 模式；表格在①勾选“已去嵌”
+  if (x) { $('deembed').checked = false; $('dmethod').style.display = 'none'; }
+  files = []; renderFiles(); bootMapping();
+}
 
 async function api(path, body) {
   const r = await fetch(path, body ? {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)} : {});
   return r.json();
 }
-
-function fmtSize(p) { return ''; }
 
 function renderFiles() {
   $('files').innerHTML = files.map((f, i) =>
@@ -153,10 +175,16 @@ function refreshGo() {
 }
 
 async function addFile() {
-  const r = await api('/api/browse', {kind: 'zip'});
-  if (r.path) { files.push(r.path); renderFiles(); }
+  const x = inputType() === 'xlsx';
+  const r = await api('/api/browse', {kind: x ? 'xlsx' : 'zip'});
+  if (r.path) {
+    if (x) files = [r.path]; else files.push(r.path);
+    renderFiles();
+    if (x && /_de/i.test(r.path.split('/').pop())) $('xlsx_de').checked = true;
+  }
   if (!$('batch_no').value && r.path) {
-    const base = r.path.split('/').pop().replace(/\.(zip|s1p|s2p|snp)$/i, '');
+    let base = r.path.split('/').pop().replace(/\.(zip|s1p|s2p|snp|xlsx|xls)$/i, '');
+    if (x) base = base.replace(/_de_results$|_results$|_de$/i, '');
     $('batch_no').value = base; checkBatch();
   }
 }
@@ -189,30 +217,42 @@ function checkBatch() {
   refreshGo();
 }
 
+function bootMapping() {
+  const sel = $('mapping_sel');
+  const x = inputType() === 'xlsx';
+  let html = '';
+  if (x) html += '<option value="__auto__">自动生成（从表格 mark 生成，推荐）</option>';
+  html += siteState.mappings.map(m =>
+    `<option value="${m.name}">${m.name}（网站已有，${m.entry_count} 条）</option>`).join('')
+    + '<option value="__local__">本地 xlsx/csv 文件…</option>';
+  sel.innerHTML = html;
+  onMappingMode();
+}
+
 async function boot() {
   siteState = await api('/api/site');
   const b = $('sitebadge');
   if (siteState.online) { b.textContent = '在线'; b.className = 'badge on'; }
   else { b.textContent = '离线（对照表只能用本地 xlsx）'; b.className = 'badge off'; }
-  const sel = $('mapping_sel');
-  sel.innerHTML = siteState.mappings.map(m =>
-    `<option value="${m.name}">${m.name}（网站已有，${m.entry_count} 条）</option>`).join('')
-    + '<option value="__local__">本地 xlsx/csv 文件…</option>';
+  bootMapping();
   const cfg = await api('/api/config');
   if (cfg.has_token) $('token').placeholder = '已记住 token（留空即用）';
 }
 
 async function startPack() {
   const sel = $('mapping_sel').value;
+  const x = inputType() === 'xlsx';
   const body = {
     inputs: files,
     batch_no: $('batch_no').value.trim(),
-    mapping_mode: sel === '__local__' ? 'local' : 'site',
-    mapping_name: sel === '__local__' ? '' : sel,
+    input_type: inputType(),
+    xlsx_deembedded: $('xlsx_de').checked,
+    mapping_mode: sel === '__auto__' ? 'auto' : (sel === '__local__' ? 'local' : 'site'),
+    mapping_name: (sel === '__local__' || sel === '__auto__') ? '' : sel,
     mapping_path: sel === '__local__' ? $('mappath').textContent : '',
     f_start: $('f_start').value ? parseFloat($('f_start').value) : null,
     f_end: $('f_end').value ? parseFloat($('f_end').value) : null,
-    deembed: $('deembed').checked,
+    deembed: x ? false : $('deembed').checked,
     deembed_method: $('deembed_method').value,
     out_dir: $('out_dir').value,
   };
@@ -239,11 +279,19 @@ async function poll() {
     } else {
       packPath = s.pack_path;
       const m = s.meta || {};
-      $('result').style.display = '';
-      $('resultinfo').innerHTML =
+      let info =
         `<div class="ok">分享包已生成</div>
          <div class="hint" style="margin-top:6px">${packPath}</div>
-         <div class="hint">器件行数 ${m.device_count} · 提取失败 ${m.failure_count} · 批次 ${m.batch_no} · ${m.process_type}${m.deembedded ? ' · 已去嵌(' + m.deembed_method + ')' : ''}</div>`;
+         <div class="hint">器件行数 ${m.device_count} · 提取失败 ${m.failure_count} · 批次 ${m.batch_no} · ${m.process_type}${m.deembedded ? ' · 已去嵌' + (m.deembed_method ? '(' + m.deembed_method + ')' : '') : ''}</div>`;
+      const rep = m.report;
+      if (rep) {
+        info += `<div class="hint" style="margin-top:6px">表格列识别：映射 ${rep.mapped.length} 列` +
+          (rep.ignored_mbvd.length ? ` · 忽略 mBVD ${rep.ignored_mbvd.length} 列（平台不存储）` : '') +
+          (rep.unknown.length ? ` · <span class="warn">未识别 ${rep.unknown.length} 列：${rep.unknown.join('、')}</span>` : '') +
+          ` · 对照表 ${rep.n_marks} 个 mark</div>`;
+      }
+      $('result').style.display = '';
+      $('resultinfo').innerHTML = info;
     }
   }
 }

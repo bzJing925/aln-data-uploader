@@ -38,6 +38,216 @@ _CAL_KEYWORDS = ("OPEN", "SHORT", "WO", "WS")
 
 ProgressCb = Callable[[str, int, int, str], None]  # (stage, current, total, msg)
 
+# ---------------------------------------------------------------------------
+# 参数表格（xlsx）直传：表头别名 → devices 列
+# ---------------------------------------------------------------------------
+
+# 必填表头（用户提示文案里的最小集合）
+XLSX_REQUIRED = [
+    "original_filename", "display_name", "EG", "FL", "AG", "PF", "Area(um2)",
+    "fs(GHz)", "fp(GHz)", "Zs(Ω)", "Zp(Ω)", "Qs", "Qp", "Qs_BodeQ", "Qp_BodeQ",
+    "k2eff(%)",
+]
+# coord 与 X+Y 二选一
+XLSX_HINT = (
+    "表格的表头至少包含：original_filename、display_name、coord（或X和Y）、"
+    "EG、FL、AG、PF、Area(um2)、fs(GHz)、fp(GHz)、Zs(Ω)、Zp(Ω)、Qs、Qp、"
+    "Qs_BodeQ、Qp_BodeQ、k2eff(%)"
+)
+
+# 表头（归一化后）→ devices 列名；归一化 = 去空格/小写
+_HEADER_ALIASES = {
+    "original_filename": "original_filename",
+    "display_name": "display_name",
+    "folder_name": "folder_name",
+    "mark": "mark",
+    "wafer": "wafer",
+    "coord": "coord",
+    "x": "x",
+    "y": "y",
+    "eg": "eg",
+    "fl": "fl",
+    "ag": "ag",
+    "pf": "pf",
+    "area": "area_n",
+    "area_n": "area_n",
+    "area(um2)": "area_um2",
+    "area_um2": "area_um2",
+    "area(μm2)": "area_um2",
+    "fs(ghz)": "fs_ghz",
+    "fp(ghz)": "fp_ghz",
+    "fs_ghz": "fs_ghz",
+    "fp_ghz": "fp_ghz",
+    "zs(ω)": "zs_ohm",
+    "zp(ω)": "zp_ohm",
+    "zs_ohm": "zs_ohm",
+    "zp_ohm": "zp_ohm",
+    "qs": "qs",
+    "qp": "qp",
+    "qs_bodeq": "qs_bodeq",
+    "qp_bodeq": "qp_bodeq",
+    "dbqs": "dbqs",
+    "dbqp": "dbqp",
+    "bodeq_fitted": "bodeq_fitted",
+    "bodeq_smooth": "bodeq_smooth",
+    "bodeq_raw": "bodeq_raw",
+    "fbode(ghz)": "fbode_ghz",
+    "fbode_ghz": "fbode_ghz",
+    "k2eff(%)": "k2eff_pct",
+    "k2eff_pct": "k2eff_pct",
+    "kt2(%)": "k2eff_pct",
+    "fp2(ghz)": "fp2_ghz",
+    "fs2(ghz)": "fs2_ghz",
+    "fp2_ghz": "fp2_ghz",
+    "fs2_ghz": "fs2_ghz",
+    "zs2(ω)": "zs2_ohm",
+    "zp2(ω)": "zp2_ohm",
+    "zs2_ohm": "zs2_ohm",
+    "zp2_ohm": "zp2_ohm",
+    "s_param_port": "s_param_port",
+    "deembedded": "deembedded",
+}
+
+# 识别但平台不存储的列（提示里列出，不进包）
+_HEADER_IGNORED = {
+    "c0(pf)", "cm(pf)", "lm(nh)", "rm(ω)", "r0(ω)", "rs(ω)",
+}
+
+
+def _norm_header(h: str) -> str:
+    return re.sub(r"\s+", "", str(h)).lower()
+
+
+def rows_from_xlsx(
+    xlsx_path: str | Path,
+    deembedded: bool,
+    progress_cb: ProgressCb | None = None,
+) -> tuple[list[dict], list[str], dict, dict, dict]:
+    """参数表格 → (rows, failures, stats, mapping_entries, report)。
+
+    deembedded 由调用方（页面勾选/CLI 参数）指定，写入每行与 meta。
+    mapping_entries 从表格唯一 mark 派生（eg/fl/ag/area/pf 取该行值）。
+    report 含 mapped/ignored/missing 列清单，供 UI 展示。
+    """
+    import pandas as pd
+
+    cb = progress_cb or (lambda *_: None)
+    xlsx_path = Path(xlsx_path)
+    if not xlsx_path.exists():
+        raise SystemExit(f"表格不存在: {xlsx_path}")
+    cb("读表", 0, 1, f"读取 {xlsx_path.name}")
+    df = pd.read_excel(xlsx_path)
+
+    # 表头映射
+    col_map: dict[str, str] = {}  # xlsx 列名 → devices 列名
+    ignored: list[str] = []
+    unknown: list[str] = []
+    for c in df.columns:
+        key = _norm_header(c)
+        if key in _HEADER_ALIASES:
+            col_map[c] = _HEADER_ALIASES[key]
+        elif key in _HEADER_IGNORED:
+            ignored.append(str(c))
+        else:
+            unknown.append(str(c))
+
+    have = set(col_map.values())
+    missing = [h for h in ("original_filename", "display_name", "eg", "fl", "ag", "pf",
+                           "area_um2", "fs_ghz", "fp_ghz", "zs_ohm", "zp_ohm", "qs", "qp",
+                           "qs_bodeq", "qp_bodeq", "k2eff_pct")
+               if h not in have]
+    if "coord" not in have and not ("x" in have and "y" in have):
+        missing.append("coord（或X和Y）")
+    if missing:
+        raise SystemExit(f"表格缺少必填列: {missing}\n{XLSX_HINT}")
+
+    cb("转换", 0, len(df), "逐行转换")
+    pos = {src: df.columns.get_loc(src) for src in col_map}
+    rows: list[dict] = []
+    failures: list[str] = []
+    for i, rec in enumerate(df.itertuples(index=False, name=None), 1):
+        r = {dev: rec[pos[src]] for src, dev in col_map.items()}
+        row = {c: None for c in PACK_COLUMNS}
+        for dev, v in r.items():
+            row[dev] = None if pd.isna(v) else v
+        if isinstance(row.get("pf"), str):
+            row["pf"] = row["pf"].strip().upper() or None
+        # 派生字段
+        fname = str(row.get("original_filename") or "")
+        parsed = parse_filename(fname)
+        if row.get("mark") is None:
+            row["mark"] = parsed.mark
+        if row.get("coord") is None:
+            row["coord"] = parsed.coord
+        if row.get("x") is None:
+            row["x"] = parsed.x
+        if row.get("y") is None:
+            row["y"] = parsed.y
+        folder = str(row.get("folder_name") or "")
+        if row.get("s_param_port") is None:
+            if folder.upper().startswith("S11"):
+                row["s_param_port"] = "S11"
+            elif folder.upper().startswith("S22"):
+                row["s_param_port"] = "S22"
+            elif parsed.port:
+                row["s_param_port"] = parsed.port
+        row["deembedded"] = bool(deembedded)
+        if not fname:
+            failures.append(f"第 {i} 行: original_filename 为空，已跳过")
+            continue
+        rows.append(row)
+        if i % 5000 == 0 or i == len(df):
+            cb("转换", i, len(df), f"{i}/{len(df)}")
+
+    if not rows:
+        raise SystemExit("表格无有效数据行")
+
+    # 从唯一 mark 派生对照表条目
+    by_mark: dict[str, dict] = {}
+    for row in rows:
+        m = row.get("mark") or "_"
+        if m not in by_mark:
+            by_mark[m] = {
+                "mark": m if m != "_" else "",
+                "description": row.get("display_name") or "",
+                "eg": row.get("eg"),
+                "fl": row.get("fl"),
+                "ag": row.get("ag"),
+                "area_s11": None,
+                "area_s22": None,
+                "has_pf": row.get("pf") == "Y",
+            }
+        e = by_mark[m]
+        if row.get("s_param_port") == "S11" and e["area_s11"] is None:
+            e["area_s11"] = row.get("area_um2")
+        if row.get("s_param_port") == "S22" and e["area_s22"] is None:
+            e["area_s22"] = row.get("area_um2")
+        if e["has_pf"] is not True and row.get("pf") == "Y":
+            e["has_pf"] = True
+    mapping_entries = [by_mark[k] for k in sorted(by_mark)]
+
+    ports = {r.get("s_param_port") for r in rows} - {None}
+    if ports == {"S11", "S22"}:
+        ptype = "BOTH"
+    elif ports == {"S22"}:
+        ptype = "S2P"
+    else:
+        ptype = "S1P"
+    stats = {
+        "process_type": ptype,
+        "deembedded": bool(deembedded),
+        "deembed_method": None,
+        "source": "xlsx",
+    }
+    report = {
+        "mapped": sorted(set(col_map.values())),
+        "ignored_mbvd": ignored,
+        "unknown": unknown,
+        "n_rows": len(rows),
+        "n_marks": len(mapping_entries),
+    }
+    return rows, failures, stats, mapping_entries, report
+
 
 def _looks_like_calibration(name: str) -> bool:
     upper = name.upper()
@@ -259,3 +469,45 @@ def make_share_pack(
     size_mb = Path(out_path).stat().st_size / 1024 / 1024
     print(f"分享包已生成: {out_path}  ({size_mb:.1f} MB, {len(rows)} 行, 失败 {len(failures)})")
     return meta
+
+
+def make_share_pack_xlsx(
+    xlsx_path: str | Path,
+    batch_no: str,
+    out_path: str | Path,
+    deembedded: bool,
+    mapping_name: str = "",
+    f_start_ghz: float | None = None,
+    f_end_ghz: float | None = None,
+    progress_cb: ProgressCb | None = None,
+) -> tuple[dict, dict]:
+    """参数表格 → 分享包。返回 (meta, report)。
+
+    mapping_name 为空时默认用对照表派生名（'auto_<batch_no>'）；
+    与网站已有对照表同名时 CI 以现有为准。
+    """
+    rows, failures, stats, mapping_entries, report = rows_from_xlsx(
+        xlsx_path, deembedded, progress_cb
+    )
+    wafer = _wafer_from_batch_no(batch_no)
+    if wafer is not None:
+        for row in rows:
+            if row.get("wafer") is None:
+                row["wafer"] = wafer
+    name = mapping_name or f"auto_{batch_no.lstrip('#')}"
+    meta = write_pack(
+        rows,
+        {
+            "batch_no": batch_no,
+            "mapping_name": name,
+            "f_start_ghz": f_start_ghz,
+            "f_end_ghz": f_end_ghz,
+            **stats,
+        },
+        {"name": name, "entries": mapping_entries},
+        failures,
+        out_path,
+    )
+    size_mb = Path(out_path).stat().st_size / 1024 / 1024
+    print(f"分享包已生成: {out_path}  ({size_mb:.1f} MB, {len(rows)} 行, 失败 {len(failures)})")
+    return meta, report

@@ -87,6 +87,10 @@ def browse_dialog(kind: str) -> None:
         path = filedialog.askopenfilename(
             title="选择对照表", filetypes=[("对照表", "*.xlsx *.xls *.csv")]
         )
+    elif kind == "xlsx":
+        path = filedialog.askopenfilename(
+            title="选择参数表格", filetypes=[("参数表格", "*.xlsx *.xls")]
+        )
     else:
         path = filedialog.askopenfilename(
             title="选择数据文件",
@@ -107,6 +111,8 @@ class PackReq(BaseModel):
     deembed: bool = False
     deembed_method: str = "default"
     out_dir: str = ""
+    input_type: str = "snp"  # "snp" | "xlsx"
+    xlsx_deembedded: bool = False  # xlsx 模式：数据已去嵌
 
 
 class SubmitReq(BaseModel):
@@ -165,6 +171,26 @@ def _fetch_site() -> dict:
 def _run_pack(req: PackReq) -> None:
     try:
         _set_state(running=True, done=False, error=None, pack_path=None, meta=None)
+        out_dir = Path(req.out_dir or str(Path.home() / "Desktop"))
+        safe = req.batch_no.replace("#", "").replace("/", "_").replace(" ", "_")
+        out = out_dir / f"分享包_{safe}.zip"
+
+        if req.input_type == "xlsx":
+            from app.share_pack import make_share_pack_xlsx
+
+            mapping_name = "" if req.mapping_mode == "auto" else req.mapping_name
+            meta, report = make_share_pack_xlsx(
+                req.inputs[0], req.batch_no, out,
+                deembedded=req.xlsx_deembedded,
+                mapping_name=mapping_name,
+                f_start_ghz=req.f_start, f_end_ghz=req.f_end,
+                progress_cb=_progress,
+            )
+            meta = {**meta, "report": report}
+            _set_state(running=False, done=True, pack_path=str(out), meta=meta,
+                       msg=f"完成：{meta['device_count']} 行")
+            return
+
         if req.mapping_mode == "site":
             site = _fetch_site()
             m = next((x for x in site["mappings"] if x["name"] == req.mapping_name), None)
@@ -180,10 +206,6 @@ def _run_pack(req: PackReq) -> None:
                 raise SystemExit(f"对照表为空或解析失败: {mp}")
             mapping_json = mapping_entries_to_json(mp.stem, mapping)
             mapping_name = mp.stem
-
-        out_dir = Path(req.out_dir or str(Path.home() / "Desktop"))
-        safe = req.batch_no.replace("#", "").replace("/", "_").replace(" ", "_")
-        out = out_dir / f"分享包_{safe}.zip"
 
         from app.share_pack import run_extraction, write_pack
 
