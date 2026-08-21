@@ -25,7 +25,6 @@ from pydantic import BaseModel
 
 from app.core.mapping import load_mapping
 from app.share_pack import (
-    make_share_pack,
     mapping_entries_from_json,
     mapping_entries_to_json,
 )
@@ -116,6 +115,18 @@ class SubmitReq(BaseModel):
     remember: bool = False
 
 
+def _ssl_context():
+    """打包环境（python.org Python）不读系统钥匙串 → 显式用 certifi 根证书。"""
+    import ssl
+
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
 def _http_json(url: str, token: str = "", method: str = "GET", payload: dict | None = None,
                timeout: int = 20):
     req = urllib.request.Request(url, method=method)
@@ -127,7 +138,7 @@ def _http_json(url: str, token: str = "", method: str = "GET", payload: dict | N
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
         req.add_header("Content-Type", "application/json")
-    with urllib.request.urlopen(req, data=data, timeout=timeout) as resp:
+    with urllib.request.urlopen(req, data=data, timeout=timeout, context=_ssl_context()) as resp:
         return json.loads(resp.read())
 
 
