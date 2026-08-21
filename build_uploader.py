@@ -52,7 +52,12 @@ def main() -> None:
         if not app.exists():
             sys.exit("未找到 ALN-Uploader.app")
         out = dist / "aln-uploader-macos-arm64.zip"
-        shutil.make_archive(str(out.with_suffix("")), "zip", dist, "ALN-Uploader.app")
+        # ditto 保留符号链接（Python.framework 内部结构依赖 Current/ 链接；
+        # shutil.make_archive 会把目录链接变成空目录 → 运行时 ModuleNotFoundError）
+        subprocess.check_call(
+            ["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(app), str(out)],
+            cwd=ROOT,
+        )
     else:
         exe = dist / "ALN-Uploader.exe"
         if not exe.exists():
