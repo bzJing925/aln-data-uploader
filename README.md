@@ -13,7 +13,8 @@ git clone --depth 1 https://github.com/bzJing925/aln-data-uploader.git
 git clone --depth 1 https://ghproxy.net/https://github.com/bzJing925/aln-data-uploader.git
 ```
 
-安装包在 `installers/` 目录（也可以到 [Releases](../../releases) 直接下载同名文件）：
+安装包在 `installers/` 目录（仓库约 120MB；克隆若因网络中断，
+改到 [Releases](../../releases) 直接单文件下载，更稳）：
 
 - macOS（Apple 芯片）：`installers/aln-uploader-macos-arm64.zip` → 解压得 `ALN-Uploader.app`
   - 首次打开如提示"无法验证开发者"：右键 → 打开；或终端执行
